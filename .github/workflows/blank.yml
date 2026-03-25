@@ -31,6 +31,7 @@ jobs:
           echo "VERSION=$VERSION" >> "$GITHUB_OUTPUT"
           echo "Latest tag: $LATEST_TAG"
           echo "Version: $VERSION"
+          git checkout "$LATEST_TAG"
 
       - name: Set up Go 1.26
         uses: actions/setup-go@v5
