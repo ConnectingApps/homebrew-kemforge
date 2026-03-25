@@ -140,6 +140,7 @@ jobs:
 
       - name: Test kemforge CLI
         run: |
+          kemforge --version
           kemforge --help
           kemforge -I https://www.google.com
-          kemforge --version
+          
