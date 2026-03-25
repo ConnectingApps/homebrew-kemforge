@@ -1,36 +1,125 @@
-# This is a basic workflow to help you get started with Actions
+name: Build, Release & Publish Kemforge
 
-name: CI
-
-# Controls when the workflow will run
 on:
-  # Triggers the workflow on push or pull request events but only for the "main" branch
   push:
     branches: [ "main" ]
-  pull_request:
-    branches: [ "main" ]
-
-  # Allows you to run this workflow manually from the Actions tab
   workflow_dispatch:
 
-# A workflow run is made up of one or more jobs that can run sequentially or in parallel
+permissions:
+  contents: write
+
 jobs:
-  # This workflow contains a single job called "build"
-  build:
-    # The type of runner that the job will run on
-    runs-on: ubuntu-latest
+  build-release-publish:
+    runs-on: macos-latest
 
-    # Steps represent a sequence of tasks that will be executed as part of the job
     steps:
-      # Checks-out your repository under $GITHUB_WORKSPACE, so your job can access it
-      - uses: actions/checkout@v4
+      - name: Checkout homebrew-kemforge
+        uses: actions/checkout@v4
 
-      # Runs a single command using the runners shell
-      - name: Run a one-line script
-        run: echo Hello, world!
+      - name: Clone kemforge source
+        run: git clone https://github.com/ConnectingApps/kemforge.git kemforge-src
 
-      # Runs a set of commands using the runners shell
-      - name: Run a multi-line script
+      - name: Fetch tags and determine version
+        id: version
+        working-directory: kemforge-src
         run: |
-          echo Add other actions to build,
-          echo test, and deploy your project.
+          git fetch --tags
+          LATEST_TAG=$(git tag --sort=-v:refname | head -n 1)
+          VERSION="${LATEST_TAG#v}"
+          echo "LATEST_TAG=$LATEST_TAG" >> "$GITHUB_OUTPUT"
+          echo "VERSION=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "Latest tag: $LATEST_TAG"
+          echo "Version: $VERSION"
+
+      - name: Set up Go 1.26
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.26'
+
+      - name: Build static binaries
+        working-directory: kemforge-src
+        run: |
+          CGO_ENABLED=0 GOOS=darwin GOARCH=amd64 go build -o kemforge-darwin-amd64 .
+          CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 go build -o kemforge-darwin-arm64 .
+
+      - name: Create tar.gz archives
+        working-directory: kemforge-src
+        run: |
+          tar czf kemforge-darwin-amd64.tar.gz kemforge-darwin-amd64
+          tar czf kemforge-darwin-arm64.tar.gz kemforge-darwin-arm64
+
+      - name: Compute SHA256 checksums
+        id: checksums
+        working-directory: kemforge-src
+        run: |
+          SHA256_AMD64=$(shasum -a 256 kemforge-darwin-amd64.tar.gz | awk '{print $1}')
+          SHA256_ARM64=$(shasum -a 256 kemforge-darwin-arm64.tar.gz | awk '{print $1}')
+          echo "SHA256_AMD64=$SHA256_AMD64" >> "$GITHUB_OUTPUT"
+          echo "SHA256_ARM64=$SHA256_ARM64" >> "$GITHUB_OUTPUT"
+          echo "SHA256 amd64: $SHA256_AMD64"
+          echo "SHA256 arm64: $SHA256_ARM64"
+
+      - name: Create GitHub Release and upload assets
+        id: release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.version.outputs.LATEST_TAG }}
+          name: ${{ steps.version.outputs.LATEST_TAG }}
+          body: "Kemforge ${{ steps.version.outputs.LATEST_TAG }}"
+          files: |
+            kemforge-src/kemforge-darwin-amd64.tar.gz
+            kemforge-src/kemforge-darwin-arm64.tar.gz
+
+      - name: Set release URLs
+        id: urls
+        run: |
+          LATEST_TAG="${{ steps.version.outputs.LATEST_TAG }}"
+          RELEASE_URL_AMD64="https://github.com/${{ github.repository }}/releases/download/${LATEST_TAG}/kemforge-darwin-amd64.tar.gz"
+          RELEASE_URL_ARM64="https://github.com/${{ github.repository }}/releases/download/${LATEST_TAG}/kemforge-darwin-arm64.tar.gz"
+          echo "RELEASE_URL_AMD64=$RELEASE_URL_AMD64" >> "$GITHUB_OUTPUT"
+          echo "RELEASE_URL_ARM64=$RELEASE_URL_ARM64" >> "$GITHUB_OUTPUT"
+          echo "Asset URL (amd64): $RELEASE_URL_AMD64"
+          echo "Asset URL (arm64): $RELEASE_URL_ARM64"
+
+      - name: Create/update Homebrew formula
+        run: |
+          mkdir -p Formula
+          cat > Formula/kemforge.rb <<'EOF'
+          class Kemforge < Formula
+            desc "Kemforge CLI"
+            homepage "https://github.com/ConnectingApps/kemforge"
+            version "${{ steps.version.outputs.VERSION }}"
+
+            if OS.mac? && Hardware::CPU.intel?
+              url "${{ steps.urls.outputs.RELEASE_URL_AMD64 }}"
+              sha256 "${{ steps.checksums.outputs.SHA256_AMD64 }}"
+            end
+
+            if OS.mac? && Hardware::CPU.arm?
+              url "${{ steps.urls.outputs.RELEASE_URL_ARM64 }}"
+              sha256 "${{ steps.checksums.outputs.SHA256_ARM64 }}"
+            end
+
+            def install
+              bin.install "kemforge-darwin-#{Hardware::CPU.arch}"
+            end
+          end
+          EOF
+
+      - name: Commit and push formula
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add Formula/kemforge.rb
+          git commit -m "Update kemforge formula to ${{ steps.version.outputs.LATEST_TAG }}" || echo "No changes to commit"
+          git push
+
+      - name: Tap and install kemforge via Homebrew
+        run: |
+          brew tap ConnectingApps/kemforge
+          brew install kemforge
+
+      - name: Test kemforge CLI
+        run: |
+          kemforge --help
+          kemforge -I https://www.google.com
