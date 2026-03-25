@@ -15,7 +15,7 @@ jobs:
 
     steps:
       - name: Checkout homebrew-kemforge
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Clone kemforge source
         run: git clone https://github.com/ConnectingApps/kemforge.git kemforge-src
@@ -34,9 +34,10 @@ jobs:
           git checkout "$LATEST_TAG"
 
       - name: Set up Go 1.26
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@v6
         with:
           go-version: '1.26'
+          cache-dependency-path: kemforge-src/go.sum
 
       - name: Build static binaries
         working-directory: kemforge-src
@@ -63,7 +64,7 @@ jobs:
 
       - name: Create GitHub Release and upload assets
         id: release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           tag_name: ${{ steps.version.outputs.LATEST_TAG }}
           name: ${{ steps.version.outputs.LATEST_TAG }}
@@ -103,7 +104,7 @@ jobs:
             end
 
             def install
-              bin.install "kemforge-darwin-#{Hardware::CPU.arch}"
+              bin.install "kemforge-darwin-#{Hardware::CPU.arch}" => "kemforge"
             end
           end
           EOF
