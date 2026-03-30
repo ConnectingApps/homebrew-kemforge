@@ -2,7 +2,12 @@ name: Build, Release & Publish Kemforge
 
 on:
   push:
-    branches: [ "main" ]
+    branches:
+      - "main"
+      - "feature/**"
+      - "feat/**"
+      - "dependabot/**"
+      - "copilot/**"
   workflow_dispatch:
 
 
