@@ -426,11 +426,22 @@ jobs:
           echo "Patched formula:"
           cat prep/kemforge.rb
 
+      - name: Create local tap for validation
+        run: |
+          set -euo pipefail
+          TAP_PATH="$(brew --repository)/Library/Taps/local/homebrew-kemforge"
+          mkdir -p "${TAP_PATH}/Formula"
+          cp prep/kemforge.rb "${TAP_PATH}/Formula/kemforge.rb"
+          cd "${TAP_PATH}"
+          git init -b main
+          git add -A
+          git commit -m "Add kemforge formula for validation"
+
       - name: Run brew audit
         run: |
           set -euo pipefail
           SUMMARY="prep/VALIDATION-SUMMARY.txt"
-          if brew audit --strict --new --online prep/kemforge.rb; then
+          if brew audit --strict --new --online local/kemforge/kemforge; then
             echo "PASS: brew audit passed" >> "${SUMMARY}"
           else
             echo "FAIL: brew audit failed" >> "${SUMMARY}"
@@ -441,7 +452,7 @@ jobs:
         run: |
           set -euo pipefail
           SUMMARY="prep/VALIDATION-SUMMARY.txt"
-          if HOMEBREW_NO_INSTALL_FROM_API=1 brew install --build-from-source prep/kemforge.rb; then
+          if HOMEBREW_NO_INSTALL_FROM_API=1 brew install --build-from-source local/kemforge/kemforge; then
             echo "PASS: brew install --build-from-source succeeded" >> "${SUMMARY}"
           else
             echo "FAIL: brew install --build-from-source failed" >> "${SUMMARY}"
@@ -452,7 +463,7 @@ jobs:
         run: |
           set -euo pipefail
           SUMMARY="prep/VALIDATION-SUMMARY.txt"
-          if brew test kemforge; then
+          if brew test local/kemforge/kemforge; then
             echo "PASS: brew test passed" >> "${SUMMARY}"
           else
             echo "FAIL: brew test failed" >> "${SUMMARY}"
@@ -555,11 +566,22 @@ jobs:
           echo "Patched formula:"
           cat prep/kemforge.rb
 
+      - name: Create local tap for validation
+        run: |
+          set -euo pipefail
+          TAP_PATH="$(brew --repository)/Library/Taps/local/homebrew-kemforge"
+          mkdir -p "${TAP_PATH}/Formula"
+          cp prep/kemforge.rb "${TAP_PATH}/Formula/kemforge.rb"
+          cd "${TAP_PATH}"
+          git init -b main
+          git add -A
+          git commit -m "Add kemforge formula for validation"
+
       - name: Run brew audit
         run: |
           set -euo pipefail
           SUMMARY="prep/VALIDATION-SUMMARY.txt"
-          if brew audit --strict --new --online prep/kemforge.rb; then
+          if brew audit --strict --new --online local/kemforge/kemforge; then
             echo "PASS: brew audit passed" >> "${SUMMARY}"
           else
             echo "FAIL: brew audit failed" >> "${SUMMARY}"
@@ -570,7 +592,7 @@ jobs:
         run: |
           set -euo pipefail
           SUMMARY="prep/VALIDATION-SUMMARY.txt"
-          if HOMEBREW_NO_INSTALL_FROM_API=1 brew install --build-from-source prep/kemforge.rb; then
+          if HOMEBREW_NO_INSTALL_FROM_API=1 brew install --build-from-source local/kemforge/kemforge; then
             echo "PASS: brew install --build-from-source succeeded" >> "${SUMMARY}"
           else
             echo "FAIL: brew install --build-from-source failed" >> "${SUMMARY}"
@@ -581,7 +603,7 @@ jobs:
         run: |
           set -euo pipefail
           SUMMARY="prep/VALIDATION-SUMMARY.txt"
-          if brew test kemforge; then
+          if brew test local/kemforge/kemforge; then
             echo "PASS: brew test passed" >> "${SUMMARY}"
           else
             echo "FAIL: brew test failed" >> "${SUMMARY}"
