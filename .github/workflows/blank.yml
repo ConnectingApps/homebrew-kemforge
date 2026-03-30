@@ -280,7 +280,7 @@ jobs:
           TARBALL_URL="${{ steps.tarball.outputs.TARBALL_URL }}"
           cat > kemforge.rb <<FORMULA
           class Kemforge < Formula
-            desc "Command-line HTTP inspection tool"
+            desc "A curl-compatible CLI tool with Post-Quantum Cryptography support"
             homepage "https://github.com/ConnectingApps/kemforge"
             url "${TARBALL_URL}"
             sha256 "${SHA256}"
