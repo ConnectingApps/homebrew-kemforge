@@ -2,7 +2,12 @@ name: Build, Release & Publish Kemforge
 
 on:
   push:
-    branches: [ "main" ]
+    branches:
+      - "main"
+      - "feature/**"
+      - "feat/**"
+      - "dependabot/**"
+      - "copilot/**"
   workflow_dispatch:
 
 
@@ -144,3 +149,504 @@ jobs:
           kemforge --help
           kemforge -I https://www.google.com
           
+  create-homebrew-core-source-artifacts:
+    runs-on: ubuntu-latest
+    outputs:
+      LATEST_TAG: ${{ steps.version.outputs.LATEST_TAG }}
+      VERSION: ${{ steps.version.outputs.VERSION }}
+      SHA256: ${{ steps.sha.outputs.SHA256 }}
+      TARBALL_URL: ${{ steps.tarball.outputs.TARBALL_URL }}
+
+    steps:
+      - name: Clone kemforge source
+        run: |
+          set -euo pipefail
+          git clone https://github.com/ConnectingApps/kemforge.git kemforge-src
+
+      - name: Fetch tags and determine version
+        id: version
+        working-directory: kemforge-src
+        run: |
+          set -euo pipefail
+          git fetch --tags
+          LATEST_TAG=$(git tag --sort=-v:refname | head -n 1)
+          VERSION="${LATEST_TAG#v}"
+          echo "LATEST_TAG=$LATEST_TAG" >> "$GITHUB_OUTPUT"
+          echo "VERSION=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "Latest tag: $LATEST_TAG"
+          echo "Version: $VERSION"
+          git checkout "$LATEST_TAG"
+
+      - name: Set up Go 1.26
+        uses: actions/setup-go@v6
+        with:
+          go-version: '1.26'
+          cache-dependency-path: kemforge-src/go.sum
+
+      - name: Download GitHub source tarball
+        id: tarball
+        working-directory: kemforge-src
+        run: |
+          set -euo pipefail
+          VERSION="${{ steps.version.outputs.VERSION }}"
+          LATEST_TAG="${{ steps.version.outputs.LATEST_TAG }}"
+          TARBALL_URL="https://github.com/ConnectingApps/kemforge/archive/refs/tags/${LATEST_TAG}.tar.gz"
+          echo "TARBALL_URL=${TARBALL_URL}" >> "$GITHUB_OUTPUT"
+          curl -fsSL "${TARBALL_URL}" -o "kemforge-${VERSION}.tar.gz"
+          echo "Downloaded kemforge-${VERSION}.tar.gz from ${TARBALL_URL}"
+          ls -la "kemforge-${VERSION}.tar.gz"
+
+      - name: Compute SHA-256 checksum
+        id: sha
+        working-directory: kemforge-src
+        run: |
+          set -euo pipefail
+          VERSION="${{ steps.version.outputs.VERSION }}"
+          SHA256=$(sha256sum "kemforge-${VERSION}.tar.gz" | awk '{print $1}')
+          echo "SHA256=${SHA256}" >> "$GITHUB_OUTPUT"
+          echo "SHA-256: ${SHA256}"
+
+      - name: Validate source tarball
+        working-directory: kemforge-src
+        run: |
+          set -euo pipefail
+          VERSION="${{ steps.version.outputs.VERSION }}"
+          TARBALL="kemforge-${VERSION}.tar.gz"
+          SUMMARY="VALIDATION-SUMMARY.txt"
+          EXTRACT_DIR=$(mktemp -d)
+
+          echo "=== Job 1: Source Tarball Validation ===" > "${SUMMARY}"
+          echo "" >> "${SUMMARY}"
+
+          tar xzf "${TARBALL}" -C "${EXTRACT_DIR}"
+          echo "PASS: extraction succeeded" >> "${SUMMARY}"
+
+          ROOT="${EXTRACT_DIR}/kemforge-${VERSION}"
+
+          if [ -d "${ROOT}" ]; then
+            echo "PASS: top-level directory is kemforge-${VERSION}/" >> "${SUMMARY}"
+          else
+            echo "FAIL: top-level directory kemforge-${VERSION}/ not found" >> "${SUMMARY}"
+            exit 1
+          fi
+
+          if [ -f "${ROOT}/go.mod" ]; then
+            echo "PASS: go.mod exists" >> "${SUMMARY}"
+          else
+            echo "FAIL: go.mod not found" >> "${SUMMARY}"
+            exit 1
+          fi
+
+          if [ -f "${ROOT}/go.sum" ]; then
+            echo "PASS: go.sum exists" >> "${SUMMARY}"
+          else
+            echo "FAIL: go.sum not found" >> "${SUMMARY}"
+            exit 1
+          fi
+
+          if [ -f "${ROOT}/LICENSE" ] || [ -f "${ROOT}/LICENSE.txt" ] || [ -f "${ROOT}/COPYING" ]; then
+            echo "PASS: license file exists" >> "${SUMMARY}"
+          else
+            echo "FAIL: no license file found (LICENSE, LICENSE.txt, or COPYING)" >> "${SUMMARY}"
+            exit 1
+          fi
+
+          BINARIES_FOUND=false
+          while IFS= read -r -d '' f; do
+            FILE_TYPE=$(file -b "$f")
+            if [[ "$f" == *.exe ]] || echo "${FILE_TYPE}" | grep -qiE 'ELF|Mach-O|PE32|MS-DOS'; then
+              echo "FAIL: compiled binary found: $f (${FILE_TYPE})" >> "${SUMMARY}"
+              BINARIES_FOUND=true
+            fi
+          done < <(find "${ROOT}" -type f -print0)
+
+          if [ "${BINARIES_FOUND}" = false ]; then
+            echo "PASS: no compiled binaries found" >> "${SUMMARY}"
+          else
+            exit 1
+          fi
+
+          echo "" >> "${SUMMARY}"
+          echo "All Job 1 tarball validation checks passed." >> "${SUMMARY}"
+          cat "${SUMMARY}"
+          rm -rf "${EXTRACT_DIR}"
+
+      - name: Generate Homebrew Core formula
+        working-directory: kemforge-src
+        run: |
+          set -euo pipefail
+          VERSION="${{ steps.version.outputs.VERSION }}"
+          SHA256="${{ steps.sha.outputs.SHA256 }}"
+          TARBALL_URL="${{ steps.tarball.outputs.TARBALL_URL }}"
+          cat > kemforge.rb <<FORMULA
+          class Kemforge < Formula
+            desc "Curl-compatible CLI tool with Post-Quantum Cryptography support"
+            homepage "https://github.com/ConnectingApps/kemforge"
+            url "${TARBALL_URL}"
+            sha256 "${SHA256}"
+            license "GPL-3.0-only"
+
+            depends_on "go" => :build
+
+            def install
+              system "go", "build", *std_go_args, "."
+            end
+
+            test do
+              assert_match version.to_s, shell_output("#{bin}/kemforge --version")
+              assert_match "Usage", shell_output("#{bin}/kemforge --help")
+            end
+          end
+          FORMULA
+          echo "Generated kemforge.rb:"
+          cat kemforge.rb
+
+      - name: Create PR-ready directory structure
+        working-directory: kemforge-src
+        run: |
+          set -euo pipefail
+          mkdir -p pr-ready-homebrew-core/Formula/k
+          cp kemforge.rb pr-ready-homebrew-core/Formula/k/kemforge.rb
+
+      - name: Generate PR handoff document
+        working-directory: kemforge-src
+        run: |
+          set -euo pipefail
+          VERSION="${{ steps.version.outputs.VERSION }}"
+          SHA256="${{ steps.sha.outputs.SHA256 }}"
+          TARBALL_URL="${{ steps.tarball.outputs.TARBALL_URL }}"
+          cat > PR-HANDOFF.txt <<HANDOFF
+          Homebrew Core PR Handoff — kemforge
+          ======================================
+
+          Formula name:      kemforge
+          Version:           ${VERSION}
+          Source tarball:    kemforge-${VERSION}.tar.gz
+          SHA-256:           ${SHA256}
+          Tarball URL:       ${TARBALL_URL}
+          Target path:       Formula/k/kemforge.rb
+          Suggested branch:  kemforge-${VERSION}
+          Suggested commit:  kemforge ${VERSION} (new formula)
+
+          The file pr-ready-homebrew-core/Formula/k/kemforge.rb already
+          contains the real tarball URL and correct SHA-256. No manual
+          URL replacement is needed.
+
+          Manual steps:
+            1. Clone your fork of Homebrew/homebrew-core
+            2. Copy pr-ready-homebrew-core/Formula/k/kemforge.rb into Formula/k/kemforge.rb
+            3. Run: brew audit --strict --new --online ./Formula/k/kemforge.rb
+            4. Run: HOMEBREW_NO_INSTALL_FROM_API=1 brew install --build-from-source ./Formula/k/kemforge.rb
+            5. Run: brew test kemforge
+            6. Commit and push branch
+            7. Open PR to Homebrew/homebrew-core
+          HANDOFF
+          echo "Generated PR-HANDOFF.txt:"
+          cat PR-HANDOFF.txt
+
+      - name: Generate metadata file
+        working-directory: kemforge-src
+        run: |
+          set -euo pipefail
+          cat > metadata.txt <<META
+          LATEST_TAG=${{ steps.version.outputs.LATEST_TAG }}
+          VERSION=${{ steps.version.outputs.VERSION }}
+          SHA256=${{ steps.sha.outputs.SHA256 }}
+          TARBALL_URL=${{ steps.tarball.outputs.TARBALL_URL }}
+          META
+
+      - name: Stage artifacts
+        run: |
+          set -euo pipefail
+          VERSION="${{ steps.version.outputs.VERSION }}"
+          mkdir -p staging/pr-ready-homebrew-core/Formula/k
+          cp "kemforge-src/kemforge-${VERSION}.tar.gz" staging/
+          cp kemforge-src/kemforge.rb staging/
+          cp kemforge-src/kemforge.rb staging/pr-ready-homebrew-core/Formula/k/kemforge.rb
+          cp kemforge-src/PR-HANDOFF.txt staging/
+          cp kemforge-src/VALIDATION-SUMMARY.txt staging/
+          cp kemforge-src/metadata.txt staging/
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: homebrew-core-prep
+          path: staging/
+
+  validate-homebrew-core-macos:
+    needs: create-homebrew-core-source-artifacts
+    runs-on: macos-latest
+
+    steps:
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: homebrew-core-prep
+          path: prep
+
+      - name: Read metadata
+        id: meta
+        run: |
+          set -euo pipefail
+          cat prep/metadata.txt >> "$GITHUB_OUTPUT"
+
+      - name: Verify tarball SHA-256
+        run: |
+          set -euo pipefail
+          VERSION="${{ steps.meta.outputs.VERSION }}"
+          EXPECTED="${{ steps.meta.outputs.SHA256 }}"
+          ACTUAL=$(shasum -a 256 "prep/kemforge-${VERSION}.tar.gz" | awk '{print $1}')
+          SUMMARY="prep/VALIDATION-SUMMARY.txt"
+          echo "" >> "${SUMMARY}"
+          echo "=== Job 2: macOS Validation ===" >> "${SUMMARY}"
+          echo "" >> "${SUMMARY}"
+          if [ "${ACTUAL}" = "${EXPECTED}" ]; then
+            echo "PASS: SHA-256 verified (${ACTUAL})" >> "${SUMMARY}"
+          else
+            echo "FAIL: SHA-256 mismatch (expected ${EXPECTED}, got ${ACTUAL})" >> "${SUMMARY}"
+            exit 1
+          fi
+
+      - name: Verify tarball root folder
+        run: |
+          set -euo pipefail
+          VERSION="${{ steps.meta.outputs.VERSION }}"
+          EXTRACT_DIR=$(mktemp -d)
+          tar xzf "prep/kemforge-${VERSION}.tar.gz" -C "${EXTRACT_DIR}"
+          SUMMARY="prep/VALIDATION-SUMMARY.txt"
+          if [ -d "${EXTRACT_DIR}/kemforge-${VERSION}" ]; then
+            echo "PASS: root folder is kemforge-${VERSION}/" >> "${SUMMARY}"
+          else
+            echo "FAIL: root folder kemforge-${VERSION}/ not found" >> "${SUMMARY}"
+            exit 1
+          fi
+          rm -rf "${EXTRACT_DIR}"
+
+      - name: Patch formula URL for local validation
+        run: |
+          set -euo pipefail
+          VERSION="${{ steps.meta.outputs.VERSION }}"
+          TARBALL_PATH="$(cd prep && pwd)/kemforge-${VERSION}.tar.gz"
+          sed -i '' "s|url \".*\"|url \"file://${TARBALL_PATH}\"|" prep/kemforge.rb
+          echo "Patched formula:"
+          cat prep/kemforge.rb
+
+      - name: Create local tap for validation
+        run: |
+          set -euo pipefail
+          TAP_PATH="$(brew --repository)/Library/Taps/local/homebrew-kemforge"
+          mkdir -p "${TAP_PATH}/Formula"
+          cp prep/kemforge.rb "${TAP_PATH}/Formula/kemforge.rb"
+          cd "${TAP_PATH}"
+          git init -b main
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "Add kemforge formula for validation"
+
+      - name: Run brew audit
+        run: |
+          set -euo pipefail
+          SUMMARY="prep/VALIDATION-SUMMARY.txt"
+          if brew audit --strict --new --online local/kemforge/kemforge; then
+            echo "PASS: brew audit passed" >> "${SUMMARY}"
+          else
+            echo "FAIL: brew audit failed" >> "${SUMMARY}"
+            exit 1
+          fi
+
+      - name: Install from source with Homebrew
+        run: |
+          set -euo pipefail
+          SUMMARY="prep/VALIDATION-SUMMARY.txt"
+          if HOMEBREW_NO_INSTALL_FROM_API=1 brew install --build-from-source local/kemforge/kemforge; then
+            echo "PASS: brew install --build-from-source succeeded" >> "${SUMMARY}"
+          else
+            echo "FAIL: brew install --build-from-source failed" >> "${SUMMARY}"
+            exit 1
+          fi
+
+      - name: Run brew test
+        run: |
+          set -euo pipefail
+          SUMMARY="prep/VALIDATION-SUMMARY.txt"
+          if brew test local/kemforge/kemforge; then
+            echo "PASS: brew test passed" >> "${SUMMARY}"
+          else
+            echo "FAIL: brew test failed" >> "${SUMMARY}"
+            exit 1
+          fi
+
+      - name: Test kemforge --version
+        run: |
+          set -euo pipefail
+          SUMMARY="prep/VALIDATION-SUMMARY.txt"
+          if kemforge --version; then
+            echo "PASS: kemforge --version succeeded" >> "${SUMMARY}"
+          else
+            echo "FAIL: kemforge --version failed" >> "${SUMMARY}"
+            exit 1
+          fi
+
+      - name: Test kemforge --help
+        run: |
+          set -euo pipefail
+          SUMMARY="prep/VALIDATION-SUMMARY.txt"
+          if kemforge --help; then
+            echo "PASS: kemforge --help succeeded" >> "${SUMMARY}"
+          else
+            echo "FAIL: kemforge --help failed" >> "${SUMMARY}"
+            exit 1
+          fi
+
+      - name: Upload validation results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: validation-macos
+          path: prep/VALIDATION-SUMMARY.txt
+
+  validate-homebrew-core-linux:
+    needs: create-homebrew-core-source-artifacts
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Install Homebrew on Linux
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y build-essential procps curl file git
+          NONINTERACTIVE=1 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+          echo "/home/linuxbrew/.linuxbrew/bin" >> "$GITHUB_PATH"
+          echo "/home/linuxbrew/.linuxbrew/sbin" >> "$GITHUB_PATH"
+
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: homebrew-core-prep
+          path: prep
+
+      - name: Read metadata
+        id: meta
+        run: |
+          set -euo pipefail
+          cat prep/metadata.txt >> "$GITHUB_OUTPUT"
+
+      - name: Verify tarball SHA-256
+        run: |
+          set -euo pipefail
+          VERSION="${{ steps.meta.outputs.VERSION }}"
+          EXPECTED="${{ steps.meta.outputs.SHA256 }}"
+          ACTUAL=$(sha256sum "prep/kemforge-${VERSION}.tar.gz" | awk '{print $1}')
+          SUMMARY="prep/VALIDATION-SUMMARY.txt"
+          echo "" >> "${SUMMARY}"
+          echo "=== Job 3: Linux Validation ===" >> "${SUMMARY}"
+          echo "" >> "${SUMMARY}"
+          if [ "${ACTUAL}" = "${EXPECTED}" ]; then
+            echo "PASS: SHA-256 verified (${ACTUAL})" >> "${SUMMARY}"
+          else
+            echo "FAIL: SHA-256 mismatch (expected ${EXPECTED}, got ${ACTUAL})" >> "${SUMMARY}"
+            exit 1
+          fi
+
+      - name: Verify tarball root folder
+        run: |
+          set -euo pipefail
+          VERSION="${{ steps.meta.outputs.VERSION }}"
+          EXTRACT_DIR=$(mktemp -d)
+          tar xzf "prep/kemforge-${VERSION}.tar.gz" -C "${EXTRACT_DIR}"
+          SUMMARY="prep/VALIDATION-SUMMARY.txt"
+          if [ -d "${EXTRACT_DIR}/kemforge-${VERSION}" ]; then
+            echo "PASS: root folder is kemforge-${VERSION}/" >> "${SUMMARY}"
+          else
+            echo "FAIL: root folder kemforge-${VERSION}/ not found" >> "${SUMMARY}"
+            exit 1
+          fi
+          rm -rf "${EXTRACT_DIR}"
+
+      - name: Patch formula URL for local validation
+        run: |
+          set -euo pipefail
+          VERSION="${{ steps.meta.outputs.VERSION }}"
+          TARBALL_PATH="$(cd prep && pwd)/kemforge-${VERSION}.tar.gz"
+          sed -i "s|url \".*\"|url \"file://${TARBALL_PATH}\"|" prep/kemforge.rb
+          echo "Patched formula:"
+          cat prep/kemforge.rb
+
+      - name: Create local tap for validation
+        run: |
+          set -euo pipefail
+          TAP_PATH="$(brew --repository)/Library/Taps/local/homebrew-kemforge"
+          mkdir -p "${TAP_PATH}/Formula"
+          cp prep/kemforge.rb "${TAP_PATH}/Formula/kemforge.rb"
+          cd "${TAP_PATH}"
+          git init -b main
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "Add kemforge formula for validation"
+
+      - name: Tap homebrew/core for offline resolution
+        run: brew tap --force homebrew/core
+
+      - name: Run brew audit
+        run: |
+          set -euo pipefail
+          SUMMARY="prep/VALIDATION-SUMMARY.txt"
+          if brew audit --strict --new --online local/kemforge/kemforge; then
+            echo "PASS: brew audit passed" >> "${SUMMARY}"
+          else
+            echo "FAIL: brew audit failed" >> "${SUMMARY}"
+            exit 1
+          fi
+
+      - name: Install from source with Homebrew
+        run: |
+          set -euo pipefail
+          SUMMARY="prep/VALIDATION-SUMMARY.txt"
+          if HOMEBREW_NO_INSTALL_FROM_API=1 brew install --build-from-source local/kemforge/kemforge; then
+            echo "PASS: brew install --build-from-source succeeded" >> "${SUMMARY}"
+          else
+            echo "FAIL: brew install --build-from-source failed" >> "${SUMMARY}"
+            exit 1
+          fi
+
+      - name: Run brew test
+        run: |
+          set -euo pipefail
+          SUMMARY="prep/VALIDATION-SUMMARY.txt"
+          if brew test local/kemforge/kemforge; then
+            echo "PASS: brew test passed" >> "${SUMMARY}"
+          else
+            echo "FAIL: brew test failed" >> "${SUMMARY}"
+            exit 1
+          fi
+
+      - name: Test kemforge --version
+        run: |
+          set -euo pipefail
+          SUMMARY="prep/VALIDATION-SUMMARY.txt"
+          if kemforge --version; then
+            echo "PASS: kemforge --version succeeded" >> "${SUMMARY}"
+          else
+            echo "FAIL: kemforge --version failed" >> "${SUMMARY}"
+            exit 1
+          fi
+
+      - name: Test kemforge --help
+        run: |
+          set -euo pipefail
+          SUMMARY="prep/VALIDATION-SUMMARY.txt"
+          if kemforge --help; then
+            echo "PASS: kemforge --help succeeded" >> "${SUMMARY}"
+          else
+            echo "FAIL: kemforge --help failed" >> "${SUMMARY}"
+            exit 1
+          fi
+
+      - name: Upload validation results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: validation-linux
+          path: prep/VALIDATION-SUMMARY.txt
