@@ -293,8 +293,8 @@ jobs:
             end
 
             test do
-              system bin/"kemforge", "--version"
-              system bin/"kemforge", "--help"
+              assert_match version.to_s, shell_output("#{bin}/kemforge --version")
+              assert_match "Usage", shell_output("#{bin}/kemforge --help")
             end
           end
           FORMULA
