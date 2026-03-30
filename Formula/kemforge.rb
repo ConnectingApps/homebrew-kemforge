@@ -1,16 +1,16 @@
 class Kemforge < Formula
   desc "Kemforge CLI"
   homepage "https://github.com/ConnectingApps/kemforge"
-  version "1.3.2"
+  version "1.3.3"
 
   if OS.mac? && Hardware::CPU.intel?
-    url "https://github.com/ConnectingApps/homebrew-kemforge/releases/download/v1.3.2/kemforge-darwin-amd64.tar.gz"
-    sha256 "5d6532a6ae45a13eece0b507a53733208f076e5bfb93b7b2489f62da34c9a434"
+    url "https://github.com/ConnectingApps/homebrew-kemforge/releases/download/v1.3.3/kemforge-darwin-amd64.tar.gz"
+    sha256 "bbdfc4041eac0667eea6b762013b774c2ac064a70c6055548629c8894cff7587"
   end
 
   if OS.mac? && Hardware::CPU.arm?
-    url "https://github.com/ConnectingApps/homebrew-kemforge/releases/download/v1.3.2/kemforge-darwin-arm64.tar.gz"
-    sha256 "ae868f689616a25e0b5c56a38aefa2e01a3fd044b264f95f3127dbb9fc4d953e"
+    url "https://github.com/ConnectingApps/homebrew-kemforge/releases/download/v1.3.3/kemforge-darwin-arm64.tar.gz"
+    sha256 "772747189cf087ffd56c6a0f57f8ec2747cb824733e1be0b0af0e3763cb6f1bd"
   end
 
   def install
