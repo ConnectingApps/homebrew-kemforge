@@ -282,7 +282,7 @@ jobs:
           class Kemforge < Formula
             desc "Command-line HTTP inspection tool"
             homepage "https://github.com/ConnectingApps/kemforge"
-            url "__LOCAL_SOURCE_TARBALL_URL__"
+            url "${TARBALL_URL}"
             sha256 "${SHA256}"
             license "GPL-3.0-only"
 
@@ -298,18 +298,15 @@ jobs:
             end
           end
           FORMULA
-          echo "Generated kemforge.rb (validation copy with placeholder URL):"
+          echo "Generated kemforge.rb:"
           cat kemforge.rb
-          sed "s|__LOCAL_SOURCE_TARBALL_URL__|${TARBALL_URL}|g" kemforge.rb > kemforge-pr-ready.rb
-          echo "Generated kemforge-pr-ready.rb (PR-ready copy with real URL):"
-          cat kemforge-pr-ready.rb
 
       - name: Create PR-ready directory structure
         working-directory: kemforge-src
         run: |
           set -euo pipefail
           mkdir -p pr-ready-homebrew-core/Formula/k
-          cp kemforge-pr-ready.rb pr-ready-homebrew-core/Formula/k/kemforge.rb
+          cp kemforge.rb pr-ready-homebrew-core/Formula/k/kemforge.rb
 
       - name: Generate PR handoff document
         working-directory: kemforge-src
@@ -365,7 +362,7 @@ jobs:
           mkdir -p staging/pr-ready-homebrew-core/Formula/k
           cp "kemforge-src/kemforge-${VERSION}.tar.gz" staging/
           cp kemforge-src/kemforge.rb staging/
-          cp kemforge-src/pr-ready-homebrew-core/Formula/k/kemforge.rb staging/pr-ready-homebrew-core/Formula/k/kemforge.rb
+          cp kemforge-src/kemforge.rb staging/pr-ready-homebrew-core/Formula/k/kemforge.rb
           cp kemforge-src/PR-HANDOFF.txt staging/
           cp kemforge-src/VALIDATION-SUMMARY.txt staging/
           cp kemforge-src/metadata.txt staging/
@@ -430,7 +427,7 @@ jobs:
           set -euo pipefail
           VERSION="${{ steps.meta.outputs.VERSION }}"
           TARBALL_PATH="$(cd prep && pwd)/kemforge-${VERSION}.tar.gz"
-          sed -i '' "s|__LOCAL_SOURCE_TARBALL_URL__|file://${TARBALL_PATH}|g" prep/kemforge.rb
+          sed -i '' "s|url \".*\"|url \"file://${TARBALL_PATH}\"|" prep/kemforge.rb
           echo "Patched formula:"
           cat prep/kemforge.rb
 
@@ -572,7 +569,7 @@ jobs:
           set -euo pipefail
           VERSION="${{ steps.meta.outputs.VERSION }}"
           TARBALL_PATH="$(cd prep && pwd)/kemforge-${VERSION}.tar.gz"
-          sed -i "s|__LOCAL_SOURCE_TARBALL_URL__|file://${TARBALL_PATH}|g" prep/kemforge.rb
+          sed -i "s|url \".*\"|url \"file://${TARBALL_PATH}\"|" prep/kemforge.rb
           echo "Patched formula:"
           cat prep/kemforge.rb
 
