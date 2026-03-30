@@ -155,6 +155,7 @@ jobs:
       LATEST_TAG: ${{ steps.version.outputs.LATEST_TAG }}
       VERSION: ${{ steps.version.outputs.VERSION }}
       SHA256: ${{ steps.sha.outputs.SHA256 }}
+      TARBALL_URL: ${{ steps.tarball.outputs.TARBALL_URL }}
 
     steps:
       - name: Clone kemforge source
@@ -182,14 +183,17 @@ jobs:
           go-version: '1.26'
           cache-dependency-path: kemforge-src/go.sum
 
-      - name: Create deterministic source tarball
+      - name: Download GitHub source tarball
+        id: tarball
         working-directory: kemforge-src
         run: |
           set -euo pipefail
           VERSION="${{ steps.version.outputs.VERSION }}"
           LATEST_TAG="${{ steps.version.outputs.LATEST_TAG }}"
-          git archive --format=tar --prefix="kemforge-${VERSION}/" "${LATEST_TAG}" | gzip -n > "kemforge-${VERSION}.tar.gz"
-          echo "Created kemforge-${VERSION}.tar.gz"
+          TARBALL_URL="https://github.com/ConnectingApps/kemforge/archive/refs/tags/${LATEST_TAG}.tar.gz"
+          echo "TARBALL_URL=${TARBALL_URL}" >> "$GITHUB_OUTPUT"
+          curl -fsSL "${TARBALL_URL}" -o "kemforge-${VERSION}.tar.gz"
+          echo "Downloaded kemforge-${VERSION}.tar.gz from ${TARBALL_URL}"
           ls -la "kemforge-${VERSION}.tar.gz"
 
       - name: Compute SHA-256 checksum
@@ -273,6 +277,7 @@ jobs:
           set -euo pipefail
           VERSION="${{ steps.version.outputs.VERSION }}"
           SHA256="${{ steps.sha.outputs.SHA256 }}"
+          TARBALL_URL="${{ steps.tarball.outputs.TARBALL_URL }}"
           cat > kemforge.rb <<FORMULA
           class Kemforge < Formula
             desc "Command-line HTTP inspection tool"
@@ -293,15 +298,18 @@ jobs:
             end
           end
           FORMULA
-          echo "Generated kemforge.rb:"
+          echo "Generated kemforge.rb (validation copy with placeholder URL):"
           cat kemforge.rb
+          sed "s|__LOCAL_SOURCE_TARBALL_URL__|${TARBALL_URL}|g" kemforge.rb > kemforge-pr-ready.rb
+          echo "Generated kemforge-pr-ready.rb (PR-ready copy with real URL):"
+          cat kemforge-pr-ready.rb
 
       - name: Create PR-ready directory structure
         working-directory: kemforge-src
         run: |
           set -euo pipefail
           mkdir -p pr-ready-homebrew-core/Formula/k
-          cp kemforge.rb pr-ready-homebrew-core/Formula/k/kemforge.rb
+          cp kemforge-pr-ready.rb pr-ready-homebrew-core/Formula/k/kemforge.rb
 
       - name: Generate PR handoff document
         working-directory: kemforge-src
@@ -309,21 +317,23 @@ jobs:
           set -euo pipefail
           VERSION="${{ steps.version.outputs.VERSION }}"
           SHA256="${{ steps.sha.outputs.SHA256 }}"
+          TARBALL_URL="${{ steps.tarball.outputs.TARBALL_URL }}"
           cat > PR-HANDOFF.txt <<HANDOFF
           Homebrew Core PR Handoff — kemforge
           ======================================
 
           Formula name:      kemforge
           Version:           ${VERSION}
-          Source tarball:     kemforge-${VERSION}.tar.gz
+          Source tarball:    kemforge-${VERSION}.tar.gz
           SHA-256:           ${SHA256}
+          Tarball URL:       ${TARBALL_URL}
           Target path:       Formula/k/kemforge.rb
           Suggested branch:  kemforge-${VERSION}
           Suggested commit:  kemforge ${VERSION} (new formula)
 
-          Before opening the PR, replace the placeholder url
-          "__LOCAL_SOURCE_TARBALL_URL__" in the formula with the actual
-          URL where the source tarball will be hosted.
+          The file pr-ready-homebrew-core/Formula/k/kemforge.rb already
+          contains the real tarball URL and correct SHA-256. No manual
+          URL replacement is needed.
 
           Manual steps:
             1. Clone your fork of Homebrew/homebrew-core
@@ -345,6 +355,7 @@ jobs:
           LATEST_TAG=${{ steps.version.outputs.LATEST_TAG }}
           VERSION=${{ steps.version.outputs.VERSION }}
           SHA256=${{ steps.sha.outputs.SHA256 }}
+          TARBALL_URL=${{ steps.tarball.outputs.TARBALL_URL }}
           META
 
       - name: Stage artifacts
@@ -354,7 +365,7 @@ jobs:
           mkdir -p staging/pr-ready-homebrew-core/Formula/k
           cp "kemforge-src/kemforge-${VERSION}.tar.gz" staging/
           cp kemforge-src/kemforge.rb staging/
-          cp kemforge-src/kemforge.rb staging/pr-ready-homebrew-core/Formula/k/kemforge.rb
+          cp kemforge-src/pr-ready-homebrew-core/Formula/k/kemforge.rb staging/pr-ready-homebrew-core/Formula/k/kemforge.rb
           cp kemforge-src/PR-HANDOFF.txt staging/
           cp kemforge-src/VALIDATION-SUMMARY.txt staging/
           cp kemforge-src/metadata.txt staging/
