@@ -5,12 +5,12 @@ class Kemforge < Formula
 
   if OS.mac? && Hardware::CPU.intel?
     url "https://github.com/ConnectingApps/homebrew-kemforge/releases/download/v1.3.3/kemforge-darwin-amd64.tar.gz"
-    sha256 "04bcd97400c9c5f4e79339e849e55daf2575c375c5da4d484e511ce7cb67d003"
+    sha256 "551e8d5d11a86ee6f46d5e255a84f8ee83a4d4f1e04a3c22c5b843ae01ab921c"
   end
 
   if OS.mac? && Hardware::CPU.arm?
     url "https://github.com/ConnectingApps/homebrew-kemforge/releases/download/v1.3.3/kemforge-darwin-arm64.tar.gz"
-    sha256 "679bdb2e1a1bcf38d1b1376b04ef72e045bc90b9401782f2c9f17ae387da9684"
+    sha256 "0e76677ba42551284f4e332295d9810e9d9747ea98e64a5a19260a893f250cf0"
   end
 
   def install
