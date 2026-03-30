@@ -579,7 +579,7 @@ jobs:
           git commit -m "Add kemforge formula for validation"
 
       - name: Tap homebrew/core for offline resolution
-        run: brew tap homebrew/core
+        run: brew tap --force homebrew/core
 
       - name: Run brew audit
         run: |
